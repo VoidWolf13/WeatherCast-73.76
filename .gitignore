@@ -1,0 +1,41 @@
+# --- Тяжёлые бинарники: в git не кладём, распространяются через релизы ---
+ffmpeg.exe
+ffprobe.exe
+voices/
+
+# --- Сборка PyInstaller и её выкладка ---
+build/
+dist/
+*_internal/
+WeatherCast-73.76.exe
+WeatherRoster.exe
+WeatherRostov.exe
+WeatherCLI.exe
+
+# --- Локальная разработка, служебное, бэкапы ---
+Разработка/
+__pycache__/
+*.pyc
+*.bak
+*.bak-*
+Claude здесь.desktop
+
+# --- Пользовательские данные и логи (не версионируем) ---
+config.json
+weather.log
+ПОГОДА.wav
+
+# --- Обновлятор (временное) ---
+.update/
+.backup/
+manifest.local.json
+
+# --- Мусор ОС и файловой системы ---
+System Volume Information/
+desktop.ini
+Thumbs.db
+.DS_Store
+
+# --- Секреты ---
+.env
+*.key
