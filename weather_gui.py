@@ -95,8 +95,6 @@ DEFAULTS = {
         {"name": "Piper", "enabled": True, "voice": ""},
     ],
     "schedule": [],
-    "last_run": None,
-    "slot_results": {},
 }
 
 
@@ -243,7 +241,6 @@ class Window(QWidget):
         self.setWindowTitle("WeatherCast 73.76")
         self.cfg = self.load_cfg()
         self.worker = None
-        self.last_fired = None
         self._fired_slot = None
 
         self._build()
@@ -629,8 +626,23 @@ class Window(QWidget):
                     % (when, sz, used, total, ", ".join(lr["skipped"])))
         return "success", "%s%s · %d/%d синт." % (when, sz, used, total or used)
 
+    def _last_run(self):
+        """Последний прогон — из общего runstate.json: его пишут и GUI,
+        и CLI из планировщика, поэтому статус не зависит от того, кто запускал."""
+        lr = weather.read_runstate().get("last_run") or {}
+        if not lr:
+            return None
+        ts = lr.get("ts")
+        if ts:
+            try:
+                lr = dict(lr)
+                lr["when"] = self._when_str(datetime.datetime.fromisoformat(ts))
+            except Exception:  # noqa
+                pass
+        return lr
+
     def _refresh_status(self):
-        lr = self.cfg.get("last_run")
+        lr = self._last_run()
         kind, text = self._outcome(lr)
         ic = self.style().standardIcon(STATE_ICON.get(kind, QStyle.SP_MessageBoxInformation))
         self.status_icon.setPixmap(ic.pixmap(16, 16))
@@ -641,26 +653,9 @@ class Window(QWidget):
         repolish(self.banner)
 
     def _record_run(self, ok, path=None, err=None, slot=None):
-        """Записать исход запуска в config и обновить статус-строку."""
-        lr = {
-            "when": datetime.datetime.now().strftime("%d.%m, %H:%M"),
-            "ok": bool(ok),
-            "path": os.path.basename(path) if path else "ПОГОДА.wav",
-            "size": os.path.getsize(path) if (path and os.path.exists(path)) else 0,
-            "err": (err or "")[:200],
-            "used": weather.LAST_RESULT.get("used"),
-            "skipped": list(weather.LAST_RESULT.get("skipped") or []),
-            "total": weather.LAST_RESULT.get("total") or 0,
-        }
-        # «when» пересобираем человекочитаемо
-        lr["when"] = self._when_str(datetime.datetime.now())
-        self.cfg["last_run"] = lr
-        if slot:
-            self.cfg.setdefault("slot_results", {})[slot] = {
-                "ok": lr["ok"], "used": lr["used"],
-                "skipped": lr["skipped"], "total": lr["total"],
-            }
-        self._touch()
+        """Записать исход запуска в общий runstate.json (см. weather.record_run).
+        Пишет туда же, куда и CLI из планировщика, — GUI лишь показывает."""
+        weather.record_run(ok, path, err, slot)
         self._refresh_status()
 
     # -------------------------------------------------- действия
@@ -679,11 +674,8 @@ class Window(QWidget):
     # -------------------------------------------------- расписание
     @staticmethod
     def _valid_time(t):
-        try:
-            hh, mm = (int(x) for x in str(t).split(":"))
-            return 0 <= hh <= 23 and 0 <= mm <= 59
-        except Exception:  # noqa
-            return False
+        # Единый разбор с CLI (weather.valid_slot): одно правило на оба входа.
+        return weather.valid_slot(t)
 
     def _sched_row(self, i):
         it = self.sched.item(i)
@@ -717,7 +709,7 @@ class Window(QWidget):
         if QMessageBox.question(self, "Расписание",
                                 "Удалить слот %s из ежедневного расписания?"
                                 % row.time_str) == QMessageBox.Yes:
-            self.cfg.get("slot_results", {}).pop(row.time_str, None)
+            weather.forget_slot(row.time_str)
             self.sched.takeItem(self.sched.row(it))
             self._fit_sched_height()
             self._update_schedule_status()
@@ -753,7 +745,7 @@ class Window(QWidget):
 
     def _slot_outcome_text(self, row, now, next_cand, passed):
         """Текст статуса слота: исход прошлого запуска важнее расписания."""
-        res = self.cfg.get("slot_results", {}).get(row.time_str)
+        res = (weather.read_runstate().get("slot_results") or {}).get(row.time_str)
         if not row.enabled():
             return "neutral", "отключён"
         if res:
@@ -909,8 +901,8 @@ class Window(QWidget):
         for i in range(self.sched.count()):
             row = self._sched_row(i)
             if row and row.enabled() and row.time_str == now.strftime("%H:%M") \
-                    and key != self.last_fired:
-                self.last_fired = key
+                    and not weather.slot_fired(key):
+                weather.mark_slot(key)      # общий флаг с CLI: слот не сработает дважды
                 self.append_log("Расписание: %s" % key)
                 self.run_now(slot=row.time_str)
                 break
@@ -923,7 +915,17 @@ class Window(QWidget):
         super().closeEvent(e)
 
 
+# Флаги, при которых тот же exe работает как консольный (см. weather.cli).
+# Планировщику Windows GUI не нужен: без этой ветки `WeatherCast-73.76.exe
+# --run --slot 07:30` открывал окно и НЕ создавал файл.
+CLI_FLAGS = ("--run", "--selftest", "--show-config", "--slot")
+
+
 def main():
+    args = sys.argv[1:]
+    if any(a == f or a.startswith(f + "=") for f in CLI_FLAGS for a in args):
+        return weather.cli(args)          # без окна: синтез и выход
+
     app = QApplication(sys.argv)
     style.apply_style(app)          # Fusion + единый QSS
     w = Window()

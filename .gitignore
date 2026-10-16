@@ -22,6 +22,7 @@ Claude здесь.desktop
 
 # --- Пользовательские данные и логи (не версионируем) ---
 config.json
+runstate.json
 weather.log
 ПОГОДА.wav
 

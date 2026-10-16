@@ -1097,6 +1097,101 @@ def config_view():
     }
 
 
+# ================================================================ журнал прогонов
+# Общий для CLI и GUI: исход каждого запуска (какой движок сработал, что
+# пропущено) и защита от двойного срабатывания слота. Лежит ОТДЕЛЬНО от
+# config.json: config.json — пользовательские настройки (правит только GUI),
+# а это — служебное состояние, которое пишут и GUI, и CLI из планировщика.
+
+RUNSTATE = os.path.join(BASE, "runstate.json")
+
+
+def _load_json(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            d = json.load(fh)
+        return d if isinstance(d, dict) else {}
+    except Exception:  # noqa
+        return {}
+
+
+def _save_json(path, data):
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=1)
+        return True
+    except Exception as e:  # noqa
+        log("[runstate] не удалось записать %s: %s" % (path, e))
+        return False
+
+
+def read_runstate(path=None):
+    """Служебное состояние прогонов: last_run, slot_results, fired."""
+    return _load_json(path or RUNSTATE)
+
+
+def write_runstate(data, path=None):
+    return _save_json(path or RUNSTATE, data)
+
+
+def valid_slot(s):
+    """Проверка формата HH:MM (00-23, 00-59) для --slot: без неё мусорный
+    аргумент попадал и в ключ fired, и в slot_results."""
+    try:
+        hh, mm = (int(x) for x in str(s).strip().split(":"))
+    except Exception:  # noqa
+        return False
+    return 0 <= hh <= 23 and 0 <= mm <= 59
+
+
+def record_run(ok, path=None, err=None, slot=None, *, when=None, runstate=None):
+    """Записать исход прогона — единая точка для CLI и GUI.
+    slot — 'HH:MM' слота, если запуск был по расписанию."""
+    st = read_runstate(runstate)
+    now = when or datetime.datetime.now()
+    lr = {
+        "ts": now.isoformat(timespec="seconds"),
+        "when": now.strftime("%d.%m, %H:%M"),
+        "ok": bool(ok),
+        "path": os.path.basename(path) if path else "ПОГОДА.wav",
+        "size": os.path.getsize(path) if (path and os.path.exists(path)) else 0,
+        "err": (err or "")[:200],
+        "used": LAST_RESULT.get("used"),
+        "skipped": list(LAST_RESULT.get("skipped") or []),
+        "total": LAST_RESULT.get("total") or 0,
+    }
+    st["last_run"] = lr
+    if slot:
+        st.setdefault("slot_results", {})[slot] = {
+            "ts": lr["ts"], "ok": lr["ok"], "used": lr["used"],
+            "skipped": lr["skipped"], "total": lr["total"],
+        }
+    write_runstate(st, runstate)
+    return lr
+
+
+def forget_slot(slot, runstate=None):
+    st = read_runstate(runstate)
+    if st.get("slot_results", {}).pop(slot, None) is not None:
+        write_runstate(st, runstate)
+
+
+def slot_fired(key, runstate=None):
+    """True, если слот уже срабатывал (key = 'YYYY-MM-DD HH:MM')."""
+    return bool(read_runstate(runstate).get("fired", {}).get(key))
+
+
+def mark_slot(key, runstate=None):
+    """Отметить слот сработавшим — общий флаг для GUI и CLI."""
+    st = read_runstate(runstate)
+    fired = st.setdefault("fired", {})
+    fired[key] = datetime.datetime.now().isoformat(timespec="seconds")
+    if len(fired) > 400:                    # держим только свежие
+        for k in sorted(fired)[:len(fired) - 400]:
+            fired.pop(k, None)
+    write_runstate(st, runstate)
+
+
 def selftest():
     """Проверка окружения без записи эфирного файла: ffmpeg/ffprobe, сеть, синтез.
     Возвращает dict для машинного вывода (--selftest --json)."""
@@ -1166,6 +1261,9 @@ def cli(argv=None):
                     help="напечатать действующие настройки и выйти")
     ap.add_argument("--selftest", action="store_true",
                     help="проверить ffmpeg, сеть и синтез без записи эфирного файла")
+    ap.add_argument("--slot", metavar="HH:MM",
+                    help="отметить слот расписания: исход ляжет в slot_results "
+                         "и повтор того же слота будет заблокирован")
     args = ap.parse_args(argv)
 
     cfg = load_config(args.config)
@@ -1195,14 +1293,33 @@ def cli(argv=None):
         ap.print_help()
         return 2
 
+    # --slot: запуск по расписанию. Отмечаем слот ДО старта, чтобы повторный
+    # запуск в ту же минуту (второй планировщик, ручной пуск) не дублировал эфир.
+    slot_key = None
+    if args.slot:
+        if not valid_slot(args.slot):
+            msg = "Некорректное время слота: %r (ожидается HH:MM)" % args.slot
+            print(json.dumps({"ok": False, "error": msg}, ensure_ascii=False)
+                  if args.json else msg, file=sys.stderr)
+            return 2
+        slot_key = "%s %s" % (datetime.datetime.now().strftime("%Y-%m-%d"), args.slot)
+        if slot_fired(slot_key):
+            msg = "Слот %s уже отработал — пропускаю" % args.slot
+            print(json.dumps({"ok": False, "skipped_slot": args.slot},
+                             ensure_ascii=False) if args.json else msg)
+            return 0
+        mark_slot(slot_key)
+
     try:
         res = generate(out_cfg, SYNTH_CHAIN if args.chain else chain_cfg, cfg=None)
     except Exception as e:  # noqa
+        record_run(False, None, str(e), args.slot)
         if args.json:
             print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
         else:
             print("Ошибка: %s" % e, file=sys.stderr)
         return 1
+    record_run(True, res.get("path"), None, args.slot)
     if args.json:
         print(json.dumps(res, ensure_ascii=False))
     else:
