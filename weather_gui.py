@@ -4,17 +4,18 @@
 
 Автор: AVAIM0013 (псевдоним).
 
-Возможности (по docs/PLAN.md):
-  • кнопка создания файла с индикатором работы;
-  • выбор постоянного места сохранения ПОГОДА.wav;
-  • порядок синтезаторов, голос для каждого, вкл/выкл;
-  • расписание: несколько времён, вкл/выкл слота, повтор каждый день.
+Раскладка (переработана 23.10.2026 по референсу дашборда):
+  1. шапка — имя и версия;
+  2. три KPI-карточки: последний выпуск, следующий слот, синтезаторы —
+     состояние видно одним взглядом, без чтения журнала;
+  3. строка статуса + главное действие (прогресс и кнопка) — сразу под KPI;
+  4. расписание — первое, что настраивают чаще всего;
+  5. синтезаторы — порядок и голоса;
+  6. файл погоды — путь сохранения;
+  7. журнал — свёрнут, открывается при необходимости.
 
-Настройки хранятся рядом со скриптом в config.json. Портативно.
-
-Единый дизайн (Fusion + style.py, без тёмной темы). Модель статусов — по исходу
-последнего запуска: success / warning (пропущен синтезатор) / error / neutral.
-Статус-строка сверху, строки расписания с маркерами, журнал сворачиваемый.
+Единый дизайн: Fusion + style.py. Модель статусов по исходу последнего
+запуска: success / warning / error / neutral.
 """
 
 import os
@@ -48,11 +49,10 @@ SYNTH_NAMES = ("Edge TTS", "gTTS", "Piper")
 MINUTE_STEPS = ("00", "05", "10", "15", "20", "30", "45")
 
 # ---- единая сетка (кратно 4 px) ------------------------------------------
-PAD = 8          # внутренний отступ
-GAP = 8          # промежуток между группами и отступы внутри групп
-H = 28           # высота полей ввода
-H_BAR = 32       # высота прогресса и главной кнопки
-GB_TOP = 18      # верхний отступ внутри QGroupBox (под заголовок)
+PAD = 10         # внутренний отступ контейнеров
+GAP = 10         # промежуток между блоками
+H = 30           # высота полей ввода
+H_BAR = 38       # высота прогресса и главной кнопки
 BTN_MIN_W = 88   # минимальная ширина кнопки
 BTN_SQ = 24      # квадратная кнопка (▲▼)
 ROW_H = 30       # высота строки расписания
@@ -65,7 +65,7 @@ STATE_ICON = {
     "neutral": QStyle.SP_MessageBoxInformation,
 }
 COLOR_KEY = {"success": "SUCCESS", "warning": "WARNING",
-             "error": "ERROR", "neutral": "NEUTRAL"}
+             "error": "ERROR", "neutral": "NEUTRAL", "info": "ACCENT"}
 
 
 def repolish(w):
@@ -127,9 +127,10 @@ class SynthRow:
         self.check = QCheckBox()
         self.check.setChecked(bool(enabled))
         self.check.setFixedWidth(24)
+        self.check.setToolTip("Включить синтезатор в цепочку")
 
         self.label = QLabel(name)
-        self.label.setFixedWidth(110)
+        self.label.setFixedWidth(96)
 
         self.combo = QComboBox()
         for lab, val in options:
@@ -138,11 +139,11 @@ class SynthRow:
         if idx >= 0:
             self.combo.setCurrentIndex(idx)
         self.combo.setEnabled(len(options) > 1)   # выбор только если есть из чего
-        self.combo.setMinimumWidth(190)
+        self.combo.setMinimumWidth(180)
         self.combo.setFixedHeight(H)
 
         self.badge = QLabel(badge)
-        self.badge.setFixedWidth(64)
+        self.badge.setFixedWidth(56)
         if badge_color:
             self.badge.setStyleSheet("color: %s;" % badge_color)
 
@@ -177,22 +178,20 @@ class SynthRow:
 
 # ================================================================ строка расписания
 class SchedRow(QWidget):
-    """Строка слота: [✓] ● 06:00  ✓ статус  [×].
-
-    Маркер (точка цвета исхода) + иконка + текст статуса; × — удалить.
-    """
+    """Строка слота: [✓] ● 06:00  ✓ статус  [×]."""
 
     def __init__(self, time_str, enabled):
         super().__init__()
         self.time_str = time_str
         self.setFixedHeight(ROW_H)
         h = QHBoxLayout(self)
-        h.setContentsMargins(PAD, 0, PAD, 0)
-        h.setSpacing(PAD)
+        h.setContentsMargins(8, 0, 8, 0)
+        h.setSpacing(8)
 
         self.check = QCheckBox()
         self.check.setChecked(bool(enabled))
         self.check.setFixedWidth(24)
+        self.check.setToolTip("Слот активен")
 
         self.dot = QLabel()
         self.dot.setFixedSize(8, 8)
@@ -222,7 +221,6 @@ class SchedRow(QWidget):
         h.addWidget(self.btn_del)
 
     def set_outcome(self, kind, text):
-        """kind: success / warning / error / neutral → цвет точки и текст статуса."""
         col = style.color(COLOR_KEY.get(kind, "NEUTRAL"))
         self.dot.setPixmap(dot_pixmap(col))
         self.status.setText(text)
@@ -300,22 +298,51 @@ class Window(QWidget):
         self.out_edit.textChanged.connect(self._touch)
         for r in self.rows:
             r.check.toggled.connect(self._touch)
+            r.check.toggled.connect(self._refresh_syn_card)
             r.combo.currentIndexChanged.connect(self._touch)
+
+    # -------------------------------------------------- KPI-карточки
+    def _make_card(self, title):
+        card = QWidget()
+        card.setObjectName("card")
+        card.setProperty("state", "neutral")
+        card.setMinimumHeight(70)
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        v = QVBoxLayout(card)
+        v.setContentsMargins(12, 8, 12, 10)
+        v.setSpacing(1)
+        t = QLabel(title)
+        t.setObjectName("cardTitle")
+        val = QLabel("—")
+        val.setObjectName("cardValue")
+        sub = QLabel("")
+        sub.setObjectName("cardSub")
+        v.addWidget(t)
+        v.addWidget(val)
+        v.addWidget(sub)
+        return {"w": card, "value": val, "sub": sub}
+
+    @staticmethod
+    def _card_set(card, value, sub, state):
+        card["value"].setText(value)
+        card["sub"].setText(sub)
+        card["w"].setProperty("state", state)
+        repolish(card["w"])
 
     # -------------------------------------------------- сборка UI
     def _build(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(GAP, GAP, GAP, GAP)
-        root.setSpacing(6)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(GAP)
 
-        # шапка приложения: название слева, версия справа (как в макете)
+        # шапка: название слева, версия справа
         head = QWidget()
         hh = QHBoxLayout(head)
-        hh.setContentsMargins(0, 0, 0, 0)
-        hh.setSpacing(PAD)
+        hh.setContentsMargins(2, 0, 2, 0)
+        hh.setSpacing(8)
         self.app_title = QLabel(getattr(weather, "APP_NAME", "WeatherCast 73.76"))
         tf = self.app_title.font()
-        tf.setPointSize(12)
+        tf.setPointSize(13)
         tf.setBold(True)
         self.app_title.setFont(tf)
         self.ver_chip = QLabel("v%s · %s" % (weather.VERSION, weather.STATUS))
@@ -329,89 +356,72 @@ class Window(QWidget):
         hh.addWidget(self.ver_chip)
         root.addWidget(head)
 
-        # статус-баннер: карточка с цветной рамкой по исходу (как в макете)
-        self.banner = QWidget()
-        self.banner.setObjectName("banner")
-        self.banner.setProperty("state", "neutral")
-        hb = QHBoxLayout(self.banner)
-        hb.setContentsMargins(PAD + 2, PAD, PAD + 2, PAD)
-        hb.setSpacing(PAD)
+        # KPI: три карточки — состояние одним взглядом
+        kpi = QHBoxLayout()
+        kpi.setSpacing(GAP)
+        self.card_last = self._make_card("ПОСЛЕДНИЙ ВЫПУСК")
+        self.card_next = self._make_card("СЛЕДУЮЩИЙ СЛОТ")
+        self.card_syn = self._make_card("СИНТЕЗАТОРЫ")
+        for c in (self.card_last, self.card_next, self.card_syn):
+            kpi.addWidget(c["w"], 1)
+        root.addLayout(kpi)
+
+        # строка статуса: иконка + текст исхода последнего прогона
+        strip = QWidget()
+        hs = QHBoxLayout(strip)
+        hs.setContentsMargins(2, 0, 2, 0)
+        hs.setSpacing(8)
         self.status_icon = QLabel()
-        self.status_icon.setFixedSize(20, 20)
+        self.status_icon.setFixedSize(16, 16)
         self.status_text = QLabel("")
         self.status_text.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.next_label = QLabel("")
-        nf = self.next_label.font()
-        nf.setPointSize(8)
-        self.next_label.setFont(nf)
-        self.next_label.setStyleSheet("color: %s;" % style.color("TEXT_SECOND"))
-        self.btn_open = QPushButton("Открыть папку")
-        self.btn_open.setIcon(self.style().standardIcon(QStyle.SP_DirOpenIcon))
-        self.btn_open.setIconSize(QSize(16, 16))
-        self.btn_open.setMinimumWidth(140)
-        self.btn_open.setFixedHeight(H)
-        self.btn_open.clicked.connect(self.open_folder)
-        hb.addWidget(self.status_icon)
-        hb.addWidget(self.status_text, 1)
-        hb.addWidget(self.next_label)
-        hb.addWidget(self.btn_open)
-        root.addWidget(self.banner)
+        hs.addWidget(self.status_icon)
+        hs.addWidget(self.status_text, 1)
+        root.addWidget(strip)
 
-        # файл погоды
-        gb_out = QGroupBox("Файл погоды")
-        hl = QHBoxLayout(gb_out)
-        hl.setContentsMargins(GAP, GB_TOP, GAP, GAP)
-        hl.setSpacing(PAD)
-        self.out_edit = QLineEdit(self.cfg["out_file"])
-        self.out_edit.setFixedHeight(H)
-        self.out_edit.setMinimumWidth(240)
-        self.out_edit.setToolTip(self.cfg["out_file"])
-        btn = QPushButton("Выбрать…")
-        btn.setFixedHeight(H)
-        btn.setMinimumWidth(BTN_MIN_W)
-        btn.clicked.connect(self.pick_out)
-        hl.addWidget(self.out_edit, 1)
-        hl.addWidget(btn)
-        root.addWidget(gb_out)
-
-        # синтезаторы
-        gb_syn = QGroupBox("Синтезаторы")
-        vs = QVBoxLayout(gb_syn)
-        vs.setContentsMargins(GAP, GB_TOP, GAP, GAP)
-        vs.setSpacing(PAD)
-        self.syn_grid = QGridLayout()
-        self.syn_grid.setContentsMargins(0, 0, 0, 0)
-        self.syn_grid.setHorizontalSpacing(PAD)
-        self.syn_grid.setVerticalSpacing(PAD)
-        self.syn_grid.setColumnStretch(2, 1)
-        vs.addLayout(self.syn_grid)
-        hint = QLabel("Галочка — включить; ▲▼ — порядок; серый список — один голос.")
-        hint.setWordWrap(True)
-        hf = hint.font()
-        hf.setPointSize(8)
-        hint.setFont(hf)
-        hint.setStyleSheet("color: %s;" % style.color("TEXT_SECOND"))
-        vs.addWidget(hint)
-        root.addWidget(gb_syn)
+        # главное действие: прогресс + кнопка
+        ab = QHBoxLayout()
+        ab.setSpacing(GAP)
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 100)
+        self.bar.setValue(0)
+        self.bar.setTextVisible(True)
+        self.bar.setAlignment(Qt.AlignCenter)
+        self.bar.setFormat("Ожидание")
+        self.bar.setFixedHeight(H_BAR)
+        self.btn_run = QPushButton("Создать файл погоды")
+        self.btn_run.setObjectName("primary")
+        self.btn_run.setShortcut(QKeySequence("F5"))
+        self.btn_run.setToolTip("Создать файл погоды (F5)")
+        self.btn_run.setFixedSize(220, H_BAR)
+        self.btn_run.clicked.connect(self.run_or_cancel)
+        ab.addWidget(self.bar, 1)
+        ab.addWidget(self.btn_run)
+        root.addLayout(ab)
 
         # расписание
-        gb_sch = QGroupBox("Расписание (ежедневно)")
+        gb_sch = QGroupBox("РАСПИСАНИЕ (ЕЖЕДНЕВНО)")
         vs2 = QVBoxLayout(gb_sch)
-        vs2.setContentsMargins(GAP, GB_TOP, GAP, GAP)
-        vs2.setSpacing(PAD)
+        vs2.setContentsMargins(10, 26, 10, 10)
+        vs2.setSpacing(8)
 
-        # ручной ввод: часы + минуты отдельно (в QTimeEdit минуты неочевидны)
         entry = QHBoxLayout()
-        entry.setSpacing(PAD)
+        entry.setSpacing(8)
         self.hh = QSpinBox()
         self.hh.setRange(0, 23)
         self.hh.setWrapping(True)
         self.hh.setFixedSize(56, H)
         self.hh.setAlignment(Qt.AlignCenter)
+        self.hh.setToolTip("Часы")
         self.mm = QComboBox()
         self.mm.setEditable(True)
         self.mm.addItems(MINUTE_STEPS)
         self.mm.setFixedSize(64, H)
+        self.mm.setToolTip("Минуты")
+        b_add = QPushButton("Добавить")
+        b_add.setFixedHeight(H)
+        b_add.setMinimumWidth(BTN_MIN_W)
+        b_add.clicked.connect(self.add_time)
         lbl_h = QLabel("ч")
         lbl_m = QLabel("мин")
         for lbl in (lbl_h, lbl_m):
@@ -419,10 +429,6 @@ class Window(QWidget):
             lbf.setPointSize(8)
             lbl.setFont(lbf)
             lbl.setStyleSheet("color: %s;" % style.color("TEXT_SECOND"))
-        b_add = QPushButton("Добавить")
-        b_add.setFixedHeight(H)
-        b_add.setMinimumWidth(BTN_MIN_W)
-        b_add.clicked.connect(self.add_time)
         entry.addWidget(self.hh)
         entry.addWidget(lbl_h)
         entry.addWidget(self.mm)
@@ -431,27 +437,61 @@ class Window(QWidget):
         entry.addWidget(b_add)
         vs2.addLayout(entry)
 
-        # список слотов: строки-виджеты, чередование фона
         self.sched = QListWidget()
         self.sched.setAlternatingRowColors(True)
-        # Высоту задаёт _fit_sched_height: пустой список не должен держать
-        # 160 px пустоты (жалоба: слишком много пустого места по вертикали).
         self.sched.setMinimumHeight(ROW_H + 6)
         self.sched.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.sched.setSelectionMode(QListWidget.NoSelection)
         vs2.addWidget(self.sched)
         root.addWidget(gb_sch)
 
-        # журнал (сворачиваемый): кнопки компактно вверху, лог занимает высоту
-        self.log_box = QGroupBox("Журнал")
+        # синтезаторы
+        gb_syn = QGroupBox("СИНТЕЗАТОРЫ · ПОРЯДОК ЦЕПОЧКИ")
+        vs = QVBoxLayout(gb_syn)
+        vs.setContentsMargins(10, 26, 10, 10)
+        vs.setSpacing(6)
+        self.syn_grid = QGridLayout()
+        self.syn_grid.setContentsMargins(0, 0, 0, 0)
+        self.syn_grid.setHorizontalSpacing(8)
+        self.syn_grid.setVerticalSpacing(8)
+        self.syn_grid.setColumnStretch(2, 1)
+        vs.addLayout(self.syn_grid)
+        root.addWidget(gb_syn)
+
+        # файл погоды
+        gb_out = QGroupBox("ФАЙЛ ПОГОДЫ")
+        hl = QHBoxLayout(gb_out)
+        hl.setContentsMargins(10, 26, 10, 10)
+        hl.setSpacing(8)
+        self.out_edit = QLineEdit(self.cfg["out_file"])
+        self.out_edit.setFixedHeight(H)
+        self.out_edit.setMinimumWidth(200)
+        self.out_edit.setToolTip(self.cfg["out_file"])
+        self.out_edit.setCursorPosition(0)      # показывать начало пути, не хвост
+        btn = QPushButton("Выбрать…")
+        btn.setFixedHeight(H)
+        btn.setMinimumWidth(84)
+        btn.clicked.connect(self.pick_out)
+        self.btn_open = QPushButton("Папка")
+        self.btn_open.setFixedHeight(H)
+        self.btn_open.setMinimumWidth(70)
+        self.btn_open.setToolTip("Открыть папку с файлом")
+        self.btn_open.clicked.connect(self.open_folder)
+        hl.addWidget(self.out_edit, 1)
+        hl.addWidget(btn)
+        hl.addWidget(self.btn_open)
+        root.addWidget(gb_out)
+
+        # журнал (сворачиваемый)
+        self.log_box = QGroupBox("ЖУРНАЛ")
         self.log_box.setCheckable(True)
         self.log_box.setChecked(False)
         outer = QVBoxLayout(self.log_box)
-        outer.setContentsMargins(0, 22, 0, 0)
+        outer.setContentsMargins(0, 26, 0, 0)
         outer.setSpacing(0)
         self.log_content = QWidget()
         vl = QVBoxLayout(self.log_content)
-        vl.setContentsMargins(GAP, 0, GAP, GAP)
+        vl.setContentsMargins(10, 0, 10, 10)
         vl.setSpacing(4)
         rowl = QHBoxLayout()
         rowl.addStretch(1)
@@ -480,26 +520,6 @@ class Window(QWidget):
         self.log_box.toggled.connect(self.log_content.setVisible)
         self.log_content.setVisible(False)
         root.addWidget(self.log_box)
-
-        # нижний action bar
-        ab = QHBoxLayout()
-        ab.setSpacing(PAD)
-        self.bar = QProgressBar()
-        self.bar.setRange(0, 100)
-        self.bar.setValue(0)
-        self.bar.setTextVisible(True)
-        self.bar.setAlignment(Qt.AlignCenter)
-        self.bar.setFormat("Ожидание")
-        self.bar.setFixedHeight(H_BAR)
-        self.btn_run = QPushButton("Создать файл погоды")
-        self.btn_run.setObjectName("primary")
-        self.btn_run.setShortcut(QKeySequence("F5"))
-        self.btn_run.setToolTip("Создать файл погоды (F5)")
-        self.btn_run.setFixedSize(220, H_BAR)
-        self.btn_run.clicked.connect(self.run_or_cancel)
-        ab.addWidget(self.bar, 1)
-        ab.addWidget(self.btn_run)
-        root.addLayout(ab)
 
     def _apply_cfg(self):
         existing = {s["name"]: s for s in self.cfg["synth"]}
@@ -567,6 +587,7 @@ class Window(QWidget):
             return
         self.rows[i], self.rows[j] = self.rows[j], self.rows[i]
         self._relayout_synths()
+        self._refresh_syn_card()
         self._touch()
 
     def piper_models(self):
@@ -641,6 +662,38 @@ class Window(QWidget):
                 pass
         return lr
 
+    def _card_last_values(self, lr):
+        """Короткие значения для KPI-карточки последнего выпуска."""
+        if not lr:
+            return "—", "файл ещё не создан", "neutral"
+        kind, _ = self._outcome(lr)
+        val = "—"
+        ts = lr.get("ts")
+        if ts:
+            try:
+                dt = datetime.datetime.fromisoformat(ts)
+                val = dt.strftime("%H:%M") if dt.date() == datetime.date.today() \
+                    else dt.strftime("%d.%m")
+            except Exception:  # noqa
+                pass
+        total = lr.get("total") or 0
+        used = total - len(lr.get("skipped") or []) if total else 0
+        size = lr.get("size") or 0
+        sz = "%.1f МБ" % (size / 1048576.0) if size else ""
+        if not lr.get("ok"):
+            sub = "ошибка · файл не создан"
+        elif lr.get("skipped"):
+            sub = "%d/%d · пропущен %s" % (used, total, ", ".join(lr["skipped"]))
+        else:
+            sub = "%d/%d синт.%s" % (used or total, total or used, (" · " + sz) if sz else "")
+        return val, sub, kind
+
+    def _refresh_syn_card(self):
+        names = self.active_chain()
+        self._card_set(self.card_syn, "%d из %d" % (len(names), len(self.rows)),
+                       " → ".join(names) if names else "не включены",
+                       "info" if names else "warning")
+
     def _refresh_status(self):
         lr = self._last_run()
         kind, text = self._outcome(lr)
@@ -649,8 +702,16 @@ class Window(QWidget):
         self.status_text.setText(text)
         self.status_text.setProperty("state", kind)
         repolish(self.status_text)
-        self.banner.setProperty("state", kind)
-        repolish(self.banner)
+        val, sub, ckind = self._card_last_values(lr)
+        self._card_set(self.card_last, val, sub, ckind)
+        self._refresh_syn_card()
+        # KPI-карточка уже показывает исход прогона — строка статуса нужна
+        # только для проблем и во время работы, иначе это шум.
+        show = kind != "success"
+        self.status_icon.setVisible(show)
+        self.status_text.setVisible(show)
+        if not show:
+            self.status_text.setText("")
 
     def _record_run(self, ok, path=None, err=None, slot=None):
         """Записать исход запуска в общий runstate.json (см. weather.record_run).
@@ -665,6 +726,7 @@ class Window(QWidget):
         if p:
             self.out_edit.setText(p)
             self.out_edit.setToolTip(p)
+            self.out_edit.setCursorPosition(0)
 
     def open_folder(self):
         d = os.path.dirname(self.out_edit.text()) or BASE
@@ -682,8 +744,8 @@ class Window(QWidget):
         return self.sched.itemWidget(it)
 
     def _fit_sched_height(self):
-        # Без слотов список минимален (не держим 160 px пустоты); со слотами —
-        # по числу строк, но не выше 160 px, чтобы окно влезало на 768 px.
+        # Без слотов список минимален; со слотами — по числу строк, но не выше
+        # 160 px, чтобы окно влезало на 768 px.
         n = self.sched.count()
         h = min(ROW_H * n, 160) if n else ROW_H + 6
         self.sched.setFixedHeight(h)
@@ -744,23 +806,27 @@ class Window(QWidget):
         return "через %d ч %d мин" % (secs // 3600, (secs % 3600) // 60)
 
     def _slot_outcome_text(self, row, now, next_cand, passed):
-        """Текст статуса слота: исход прошлого запуска важнее расписания."""
+        """Короткий статус слота: строка должна читаться одним взглядом.
+
+        Подробности исхода — в KPI-карточке последнего выпуска, поэтому
+        здесь только сигнал: ок / частично / ошибка / нет данных / таймер.
+        """
         res = (weather.read_runstate().get("slot_results") or {}).get(row.time_str)
         if not row.enabled():
-            return "neutral", "отключён"
+            return "neutral", "выключен"
         if res:
             total = res.get("total", 0)
             used = total - len(res.get("skipped", []) or [])
             if not res.get("ok"):
-                return "error", "пропущен · файл не создан"
+                return "error", "ошибка"
             if res.get("skipped"):
-                return "warning", "отработал · %d/%d, пропущен %s" \
-                    % (used, total, ", ".join(res["skipped"]))
-            return "success", "отработал · %d/%d" % (total or used, total or used)
+                return "warning", "частично · %d/%d" % (used, total)
+            return "success", "ок · %d/%d" % (total or used, total or used)
         if passed:
-            return "neutral", "прошёл · нет данных (приложение не работало)"
-        return "neutral", "предстоит %s" % self._left(next_cand - now) if \
-            (next_cand and not passed) else "предстоит"
+            return "neutral", "нет данных"
+        if next_cand and not passed:
+            return "neutral", self._left(next_cand - now)
+        return "neutral", "предстоит"
 
     def _update_schedule_status(self):
         now = datetime.datetime.now()
@@ -789,10 +855,12 @@ class Window(QWidget):
             row.set_outcome(kind, text)
 
         if next_cand is None:
-            self.next_label.setText("")
-            return
-        self.next_label.setText("Следующий: %s (%s)"
-                                % (next_cand.strftime("%H:%M"), self._left(next_cand - now)))
+            self._card_set(self.card_next, "—", "нет активных слотов", "neutral")
+        else:
+            sub = self._left(next_cand - now)
+            if next_cand.date() != now.date():
+                sub = "завтра, " + sub
+            self._card_set(self.card_next, next_cand.strftime("%H:%M"), sub, "info")
 
     # -------------------------------------------------- запуск
     def active_chain(self):
@@ -869,6 +937,8 @@ class Window(QWidget):
             self.status_icon.setPixmap(ic.pixmap(16, 16))
             self.status_text.setText("Идёт синтез · %s" % names if names else "Идёт синтез")
             self.status_text.setProperty("state", "neutral")
+            self.status_icon.setVisible(True)
+            self.status_text.setVisible(True)
         else:
             self.btn_run.setProperty("mode", "")
             self.btn_run.setText("Создать файл погоды")
@@ -931,8 +1001,8 @@ def main():
     w = Window()
     # 1366×768: окно с заголовком и панелью задач не должно вылезать за экран.
     # 700 + рамка/заголовок (~40) + панель задач (~40) укладываются в 768.
-    w.resize(560, 700)
-    w.setMinimumWidth(520)
+    w.resize(600, 700)
+    w.setMinimumWidth(540)
     w.show()
     return app.exec()
 
