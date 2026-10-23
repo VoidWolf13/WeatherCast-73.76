@@ -924,11 +924,11 @@ class Window(QWidget):
             return "через %d мин" % (secs // 60)
         return "через %d ч %d мин" % (secs // 3600, (secs % 3600) // 60)
 
-    def _slot_outcome_text(self, row, now, next_cand, passed):
+    def _slot_outcome_text(self, row, now, own_cand, passed):
         """Короткий статус слота: строка должна читаться одним взглядом.
 
-        Подробности исхода — в KPI-карточке последнего выпуска, поэтому
-        здесь только сигнал: ок / частично / ошибка / нет данных / таймер.
+        own_cand — ближайший момент ЭТОГО слота, а не общий «следующий слот»:
+        иначе все будущие строки показывали одно и то же «через N мин».
         """
         res = (weather.read_runstate().get("slot_results") or {}).get(row.time_str)
         if not row.enabled():
@@ -943,8 +943,8 @@ class Window(QWidget):
             return "success", "ок · %d/%d" % (total or used, total or used)
         if passed:
             return "neutral", "нет данных"
-        if next_cand and not passed:
-            return "neutral", self._left(next_cand - now)
+        if own_cand:
+            return "neutral", self._left(own_cand - now)
         return "neutral", "предстоит"
 
     def _update_schedule_status(self):
@@ -970,7 +970,8 @@ class Window(QWidget):
                     next_cand = cand
 
         for row, cand, passed in items:
-            kind, text = self._slot_outcome_text(row, now, next_cand, passed)
+            # Своё время слота, а не next_cand: у каждой строки свой отсчёт.
+            kind, text = self._slot_outcome_text(row, now, cand, passed)
             row.set_outcome(kind, text)
 
         if next_cand is None:
