@@ -11,7 +11,7 @@
 Готовая сборка под Windows 10 x64 — в разделе
 [**Releases**](https://github.com/VoidWolf13/WeatherCast-73.76/releases/latest):
 
-- **`WeatherCast-73.76-0.23.1-win64.zip`** (~373 МБ) — распаковать целиком
+- **`WeatherCast-73.76-0.23.2-win64.zip`** (~373 МБ) — распаковать целиком
   и запустить `WeatherCast-73.76.exe`.
 
 ## Что это

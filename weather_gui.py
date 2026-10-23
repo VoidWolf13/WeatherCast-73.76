@@ -1004,7 +1004,7 @@ class Window(QWidget):
         self.save_cfg()
         out = self.out_edit.text()
         self.log.clear()
-        self._set_busy(True, chain)
+        self._set_busy(True)
         self.set_progress("work", None, "Синтез…")
         self.append_log("Запуск: %s" % ", ".join(chain))
         self.worker = Worker(out, chain)
@@ -1053,16 +1053,19 @@ class Window(QWidget):
             self.bar.setValue(value)
         self.bar.setFormat(text)
 
-    def _set_busy(self, busy, chain=None):
-        """Переключить главную кнопку и статус-строку в режим работы/покоя."""
+    def _set_busy(self, busy):
+        """Переключить главную кнопку и статус-строку в режим работы/покоя.
+
+        Состав цепочки здесь намеренно не дублируется: какие синтезаторы
+        включены, видно в блоке «Синтезаторы» и в KPI-карточке.
+        """
         if busy:
             self.btn_run.setProperty("mode", "cancel")
             self.btn_run.setText("Отмена")
             self.btn_run.setToolTip("Прервать синтез")
-            names = ", ".join(chain) if chain else ""
             # Красная лампочка = идёт запись (как REC на пульте).
             self.status_icon.setPixmap(lamp_pixmap(style.color("ERROR")))
-            self.status_text.setText("Идёт синтез · %s" % names if names else "Идёт синтез")
+            self.status_text.setText("Идёт запись")
             self.status_text.setProperty("state", "neutral")
             self.status_icon.setVisible(True)
             self.status_text.setVisible(True)
