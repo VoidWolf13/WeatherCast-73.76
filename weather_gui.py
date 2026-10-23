@@ -118,21 +118,36 @@ class HourSpin(QSpinBox):
 
 
 class MinuteSpin(QSpinBox):
-    """Минуты шагом 15: 00/15/30/45. Ручной ввод нормализуется к ближайшему
-    допустимому значению — «07» станет 00, «08» станет 15, «59» станет 45.
+    """Минуты: стрелки шагом 15 для быстрого выбора, ручной ввод — любой 0–59.
+
+    Шаг относится только к стрелкам/колесу; набранное с клавиатуры число не
+    округляется (нужно точное значение, например 07). Вне диапазона — зажим:
+    «75» станет 59, «-3» станет 0. Мусор оставляет прежнее значение.
     """
 
     STEP = 15
 
     def __init__(self):
         super().__init__()
-        self.setRange(0, 45)
+        self.setRange(0, 59)
         self.setSingleStep(self.STEP)
         self.setWrapping(True)
         self.setKeyboardTracking(False)
 
     def textFromValue(self, v):
         return "%02d" % v
+
+    def stepBy(self, steps):
+        # Стрелки идут по кругу 0 → 15 → 30 → 45 → 0, независимо от ручного
+        # значения: 31 вверх даст 45, вниз — 30. Ручной ввод 0–59 не трогаем.
+        n = self.value()
+        S = self.STEP
+        if steps > 0:
+            nxt = (n // S + 1) * S if n % S == 0 else ((n // S) + 1) * S
+            self.setValue(0 if nxt > 45 else nxt)
+        elif steps < 0:
+            nxt = ((n - 1) // S) * S if n > 0 else 45
+            self.setValue(45 if nxt < 0 else nxt)
 
     def validate(self, text, pos):
         return (QValidator.Acceptable, text, pos)
@@ -142,8 +157,7 @@ class MinuteSpin(QSpinBox):
             n = int(str(text).strip())
         except ValueError:
             return self.value()
-        n = int(round(n / float(self.STEP))) * self.STEP
-        return max(0, min(45, n))
+        return max(0, min(59, n))
 
 
 DEFAULTS = {
@@ -475,7 +489,7 @@ class Window(QWidget):
         self.mm = MinuteSpin()
         self.mm.setFixedSize(64, H)
         self.mm.setAlignment(Qt.AlignCenter)
-        self.mm.setToolTip("Минуты: 00 / 15 / 30 / 45 — ввод округляется")
+        self.mm.setToolTip("Минуты: стрелки шагом 15, ввод любой 0–59")
         # Enter в любом из полей = «Добавить»
         self.hh.lineEdit().returnPressed.connect(self.add_time)
         self.mm.lineEdit().returnPressed.connect(self.add_time)
