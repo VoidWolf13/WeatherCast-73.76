@@ -58,8 +58,22 @@
 
 ```bash
 python3 -m pip install --user -r requirements-dev.txt
-python3 -m pytest tests -q          # 37 тестов, ~0.5 с
+python3 -m pytest tests -q          # 102 теста, ~4 с
 ```
+
+Что покрыто:
+
+| Файл | О чём |
+|---|---|
+| `test_time_fields.py` | поля часов и минут, шаг стрелок |
+| `test_runstate.py` | `runstate.json`: исходы, слоты, `fired`, `forget_slot` |
+| `test_voices.py` | выбор голоса Piper, портативность пути модели |
+| `test_cli.py` | коды возврата CLI 0/1/2, `--slot`, `--chain`, `--voice`, `--config` |
+| `test_corrupt.py` | битые `config.json`/`runstate.json`, недоступные каталоги, ветки `run()` |
+| `test_props.py` | свойства числительных, температур, ветра, обрезки текста (hypothesis) |
+
+Журнал и `runstate.json` тесты уводят во временный каталог (`WEATHER_LOG_DIR`),
+поэтому боевой `weather.log` прогон не трогает.
 
 Случайные действия с интерфейсом (stateful fuzz на hypothesis, отдельный
 маркер — обычный прогон их пропускает):

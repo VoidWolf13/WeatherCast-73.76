@@ -91,7 +91,10 @@ def _early_log(msg):
     до run(), обычный журнал не появится вовсе. Эта запись идёт сразу
     после вычисления путей, поэтому переживает любой более поздний сбой."""
     line = "%s %s" % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), msg)
-    for d in (BASE, tempfile.gettempdir()):
+    # WEATHER_LOG_DIR — перенаправление раннего журнала. Нужно тестам: без него
+    # каждый импорт weather в pytest оставлял в боевом weather.log строку
+    # «=== старт ===», и настоящая история эфира тонула в мусоре.
+    for d in (os.environ.get("WEATHER_LOG_DIR"), BASE, tempfile.gettempdir()):
         try:
             with open(os.path.join(d, "weather.log"), "a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
@@ -272,7 +275,7 @@ def num_word(n):
     return " ".join(out)
 
 
-_GEN = ["", "одного", "двух", "трёх", "четырёх", "пяти", "шести", "семи", "восьми",
+_GEN = ["нуля", "одного", "двух", "трёх", "четырёх", "пяти", "шести", "семи", "восьми",
         "девяти", "десяти", "одиннадцати", "двенадцати", "тринадцати", "четырнадцати",
         "пятнадцати", "шестнадцати", "семнадцати", "восемнадцати", "девятнадцати"]
 _GEN_TENS = ["", "", "двадцати", "тридцати", "сорока", "пятидесяти", "шестидесяти",
@@ -1194,12 +1197,18 @@ def write_runstate(data, path=None):
 
 def valid_slot(s):
     """Проверка формата HH:MM (00-23, 00-59) для --slot: без неё мусорный
-    аргумент попадал и в ключ fired, и в slot_results."""
-    try:
-        hh, mm = (int(x) for x in str(s).strip().split(":"))
-    except Exception:  # noqa
+    аргумент попадал и в ключ fired, и в slot_results.
+
+    Строго две цифры в каждом поле: «9:5» и «09:05» иначе дают РАЗНЫЕ ключи
+    fired (GUI пишет %02d:%02d), и один слот отрабатывает дважды — двойной
+    выход в эфир."""
+    s = str(s).strip()
+    if len(s) != 5 or s[2] != ":":
         return False
-    return 0 <= hh <= 23 and 0 <= mm <= 59
+    hh, mm = s[:2], s[3:]
+    if not (hh.isdigit() and mm.isdigit()):
+        return False
+    return 0 <= int(hh) <= 23 and 0 <= int(mm) <= 59
 
 
 def record_run(ok, path=None, err=None, slot=None, *, when=None, runstate=None):
@@ -1368,7 +1377,10 @@ def cli(argv=None):
     # --slot: запуск по расписанию. Отмечаем слот ДО старта, чтобы повторный
     # запуск в ту же минуту (второй планировщик, ручной пуск) не дублировал эфир.
     slot_key = None
-    if args.slot:
+    # Именно `is not None`: `--slot ""` даёт пустую строку, а она falsy —
+    # с `if args.slot` пустой слот молча превращался в запуск без отметки,
+    # и защита от двойного выхода в эфир не включалась.
+    if args.slot is not None:
         if not valid_slot(args.slot):
             msg = "Некорректное время слота: %r (ожидается HH:MM)" % args.slot
             print(json.dumps({"ok": False, "error": msg}, ensure_ascii=False)
