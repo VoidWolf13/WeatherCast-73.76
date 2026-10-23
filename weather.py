@@ -885,6 +885,29 @@ def synth_gtts(sentences, mp3):
 
 
 # 3) Piper — полностью локальный, резерв. Модель .onnx ищется в voices/ и рядом.
+def resolve_piper_model(model):
+    """Имя/путь модели → существующий файл в voices/ (или None).
+
+    В config.json храним только имя файла (`ru_RU-denis-medium.onnx`), а не
+    абсолютный путь: иначе после переноса папки на другую машину путь
+    вида C:\\Users\\... перестаёт существовать и выбор голоса молча
+    подменяется первым файлом по алфавиту.
+    """
+    if not model:
+        return None
+    model = str(model)
+    if os.path.isabs(model) and os.path.exists(model):
+        return model
+    base = os.path.basename(model.replace("\\", "/"))
+    for d in (os.path.join(BASE, "voices"), os.path.join(RES, "voices"), BASE, RES):
+        if not os.path.isdir(d):
+            continue
+        p = os.path.join(d, base)
+        if os.path.exists(p):
+            return p
+    return None
+
+
 def synth_piper(sentences, wav):
     # Бинарник ищем как ffmpeg/ffprobe: сначала рядом с программой (в сборке
     # piper.exe лежит в _internal), потом в PATH. shutil.which на чистой
@@ -893,10 +916,9 @@ def synth_piper(sentences, wav):
     if not exe:
         log("[piper] бинарник не найден рядом с программой и в PATH")
         return False
-    model = PIPER_MODEL
-    if model and not os.path.exists(model):
-        log("[piper] модель из настроек не найдена: %s" % model)
-        model = None
+    model = resolve_piper_model(PIPER_MODEL)
+    if PIPER_MODEL and not model:
+        log("[piper] модель из настроек не найдена: %s" % PIPER_MODEL)
     if not model:
         for d in (os.path.join(BASE, "voices"), os.path.join(RES, "voices"), BASE, RES):
             if os.path.isdir(d):
@@ -1109,7 +1131,8 @@ def apply_config(cfg):
         VOICE = voices["Edge TTS"]
         EDGE_VOICES = [VOICE] + [v for v in EDGE_VOICES if v != VOICE]
     if voices.get("Piper"):
-        PIPER_MODEL = voices["Piper"]
+        # Храним имя файла (портативно), а модулю отдаём разрешённый путь.
+        PIPER_MODEL = resolve_piper_model(voices["Piper"]) or voices["Piper"]
     return out, chain
 
 

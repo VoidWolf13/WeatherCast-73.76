@@ -245,6 +245,11 @@ class SynthRow:
         for lab, val in options:
             self.combo.addItem(lab, val)
         idx = self.combo.findData(current)
+        if idx < 0 and current:
+            # Старый config.json хранил абсолютный путь (в том числе Windows):
+            # сверяем по имени файла, иначе выбор молча падал на первый пункт.
+            base = os.path.basename(str(current).replace("\\", "/"))
+            idx = self.combo.findData(base)
         if idx >= 0:
             self.combo.setCurrentIndex(idx)
         self.combo.setEnabled(len(options) > 1)   # выбор только если есть из чего
@@ -679,7 +684,9 @@ class Window(QWidget):
             models = self.piper_models()
             if not models:
                 return [("нет моделей", "")]
-            return [(piper_voice_label(p), p) for p in models]
+            # Значение — имя файла, а не путь: config.json должен переживать
+            # перенос папки на другую машину (см. weather.resolve_piper_model).
+            return [(piper_voice_label(p), os.path.basename(p)) for p in models]
         return [("Русский", "")]        # gTTS — один голос
 
     def badge_for(self, name):
