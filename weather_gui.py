@@ -23,7 +23,7 @@ import sys
 import json
 import datetime
 
-from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl, QSize
+from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl, QSize, QRectF
 from PySide6.QtGui import (QDesktopServices, QFont, QShortcut, QKeySequence,
                            QColor, QPixmap, QPainter, QValidator)
 from PySide6.QtWidgets import (
@@ -56,13 +56,7 @@ BTN_MIN_W = 88   # минимальная ширина кнопки
 BTN_SQ = 24      # квадратная кнопка (▲▼)
 ROW_H = 30       # высота строки расписания
 
-# исход запуска → иконка состояния (цвет — из style.py)
-STATE_ICON = {
-    "success": QStyle.SP_DialogApplyButton,
-    "warning": QStyle.SP_MessageBoxWarning,
-    "error": QStyle.SP_MessageBoxCritical,
-    "neutral": QStyle.SP_MessageBoxInformation,
-}
+# исход запуска → цвет лампочки (см. lamp_pixmap; цвета — из style.py)
 COLOR_KEY = {"success": "SUCCESS", "warning": "WARNING",
              "error": "ERROR", "neutral": "NEUTRAL", "info": "ACCENT"}
 
@@ -71,6 +65,32 @@ def repolish(w):
     """Перечитать QSS после смены свойства виджета (state и т.п.)."""
     w.style().unpolish(w)
     w.style().polish(w)
+
+
+def lamp_pixmap(color, size=14):
+    """Круглый индикатор-«лампочка»: яркое ядро в мягком ореоле.
+
+    Системные иконки Qt (круговые стрелки, галочка в круге) выбивались из
+    тёмного дашборда — состояние теперь читается цветом и формой одного
+    элемента: красная лампочка — идёт запись, зелёная — готово.
+    """
+    dpr = 2                      # чёткие края на HiDPI
+    pm = QPixmap(size * dpr, size * dpr)
+    pm.fill(Qt.transparent)
+    pm.setDevicePixelRatio(dpr)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setPen(Qt.NoPen)
+    c = QColor(color)
+    halo = QColor(c)
+    halo.setAlpha(70)
+    p.setBrush(halo)
+    p.drawEllipse(QRectF(0.5, 0.5, size - 1.0, size - 1.0))
+    p.setBrush(c)
+    r = size * 0.28
+    p.drawEllipse(QRectF(size / 2.0 - r, size / 2.0 - r, r * 2, r * 2))
+    p.end()
+    return pm
 
 
 def dot_pixmap(color, size=8):
@@ -791,21 +811,18 @@ class Window(QWidget):
     def _refresh_status(self):
         lr = self._last_run()
         kind, text = self._outcome(lr)
-        ic = self.style().standardIcon(STATE_ICON.get(kind, QStyle.SP_MessageBoxInformation))
-        self.status_icon.setPixmap(ic.pixmap(16, 16))
-        self.status_text.setText(text)
+        # При успехе подробности уже в KPI-карточке — здесь достаточно сигнала.
+        shown = "Готово" if kind == "success" else text
+        self.status_icon.setPixmap(
+            lamp_pixmap(style.color(COLOR_KEY.get(kind, "NEUTRAL"))))
+        self.status_text.setText(shown)
         self.status_text.setProperty("state", kind)
         repolish(self.status_text)
+        self.status_icon.setVisible(True)
+        self.status_text.setVisible(True)
         val, sub, ckind = self._card_last_values(lr)
         self._card_set(self.card_last, val, sub, ckind)
         self._refresh_syn_card()
-        # KPI-карточка уже показывает исход прогона — строка статуса нужна
-        # только для проблем и во время работы, иначе это шум.
-        show = kind != "success"
-        self.status_icon.setVisible(show)
-        self.status_text.setVisible(show)
-        if not show:
-            self.status_text.setText("")
 
     def _record_run(self, ok, path=None, err=None, slot=None):
         """Записать исход запуска в общий runstate.json (см. weather.record_run).
@@ -1043,8 +1060,8 @@ class Window(QWidget):
             self.btn_run.setText("Отмена")
             self.btn_run.setToolTip("Прервать синтез")
             names = ", ".join(chain) if chain else ""
-            ic = self.style().standardIcon(QStyle.SP_BrowserReload)
-            self.status_icon.setPixmap(ic.pixmap(16, 16))
+            # Красная лампочка = идёт запись (как REC на пульте).
+            self.status_icon.setPixmap(lamp_pixmap(style.color("ERROR")))
             self.status_text.setText("Идёт синтез · %s" % names if names else "Идёт синтез")
             self.status_text.setProperty("state", "neutral")
             self.status_icon.setVisible(True)
