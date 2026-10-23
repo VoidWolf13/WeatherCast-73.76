@@ -25,7 +25,7 @@ import datetime
 
 from PySide6.QtCore import Qt, QThread, Signal, QTimer, QUrl, QSize
 from PySide6.QtGui import (QDesktopServices, QFont, QShortcut, QKeySequence,
-                           QColor, QPixmap, QPainter)
+                           QColor, QPixmap, QPainter, QValidator)
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QLabel, QLineEdit, QListWidget, QListWidgetItem,
@@ -86,17 +86,64 @@ def dot_pixmap(color, size=8):
     return pm
 
 
+class HourSpin(QSpinBox):
+    """Часы 0–23: ручной ввод с клавиатуры, значение зажимается в диапазон.
+
+    Важен именно ручной ввод: щёлкнуть по полю, набрать «7», Enter. Стрелки —
+    бонус. Ввод вне диапазона не отвергается молча, а приводится к границе:
+    «25» станет 23, «-1» станет 0. Невнятный текст («abc») не меняет значение.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.setRange(0, 23)
+        self.setWrapping(True)
+        self.setKeyboardTracking(False)   # применять значение по Enter/уходу фокуса
+
+    def textFromValue(self, v):
+        return "%02d" % v
+
+    def validate(self, text, pos):
+        # QSpinBox по умолчанию отвергает текст вне диапазона — тогда «25»
+        # молча игнорировалось бы. Принимаем любой текст: диапазон применяет
+        # valueFromText. Мусор оставляет прежнее значение.
+        return (QValidator.Acceptable, text, pos)
+
+    def valueFromText(self, text):
+        try:
+            n = int(str(text).strip())
+        except ValueError:
+            return self.value()
+        return max(0, min(23, n))
+
+
 class MinuteSpin(QSpinBox):
-    """Минуты шагом 15: 00/15/30/45, по кругу, всегда двузначно."""
+    """Минуты шагом 15: 00/15/30/45. Ручной ввод нормализуется к ближайшему
+    допустимому значению — «07» станет 00, «08» станет 15, «59» станет 45.
+    """
+
+    STEP = 15
 
     def __init__(self):
         super().__init__()
         self.setRange(0, 45)
-        self.setSingleStep(15)
+        self.setSingleStep(self.STEP)
         self.setWrapping(True)
+        self.setKeyboardTracking(False)
 
     def textFromValue(self, v):
         return "%02d" % v
+
+    def validate(self, text, pos):
+        return (QValidator.Acceptable, text, pos)
+
+    def valueFromText(self, text):
+        try:
+            n = int(str(text).strip())
+        except ValueError:
+            return self.value()
+        n = int(round(n / float(self.STEP))) * self.STEP
+        return max(0, min(45, n))
 
 
 DEFAULTS = {
@@ -421,15 +468,17 @@ class Window(QWidget):
 
         entry = QHBoxLayout()
         entry.setSpacing(8)
-        self.hh = QSpinBox()
-        self.hh.setRange(0, 23)
-        self.hh.setWrapping(True)
+        self.hh = HourSpin()
         self.hh.setFixedSize(64, H)
         self.hh.setAlignment(Qt.AlignCenter)
-        self.hh.setToolTip("Часы")
+        self.hh.setToolTip("Часы: 0–23, можно ввести с клавиатуры")
         self.mm = MinuteSpin()
         self.mm.setFixedSize(64, H)
-        self.mm.setToolTip("Минуты")
+        self.mm.setAlignment(Qt.AlignCenter)
+        self.mm.setToolTip("Минуты: 00 / 15 / 30 / 45 — ввод округляется")
+        # Enter в любом из полей = «Добавить»
+        self.hh.lineEdit().returnPressed.connect(self.add_time)
+        self.mm.lineEdit().returnPressed.connect(self.add_time)
         b_add = QPushButton("Добавить")
         b_add.setFixedHeight(H)
         b_add.setMinimumWidth(BTN_MIN_W)
@@ -799,6 +848,10 @@ class Window(QWidget):
         self.add_sched_row(t, True, touch=True)
 
     def add_time(self):
+        # Сначала применяем набранный текст: если пользователь жмёт «Добавить»,
+        # не выходя из поля, значение ещё не могло быть интерпретировано.
+        self.hh.interpretText()
+        self.mm.interpretText()
         self.add_time_str("%02d:%02d" % (self.hh.value(), self.mm.value()))
 
     @staticmethod
