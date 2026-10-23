@@ -45,6 +45,29 @@ LOG_HOOK = None
 LAST_RESULT = {}
 
 
+# ---- кооперативная отмена ----
+# terminate() потока оставляет висящие ffmpeg/piper и temp-файлы, поэтому
+# GUI просит остановиться флагом, а синтез проверяет его между этапами.
+class Cancelled(Exception):
+    """Синтез прерван оператором."""
+
+
+CANCEL = {"flag": False}
+
+
+def request_cancel():
+    CANCEL["flag"] = True
+
+
+def reset_cancel():
+    CANCEL["flag"] = False
+
+
+def _check_cancel():
+    if CANCEL["flag"]:
+        raise Cancelled("Прервано оператором")
+
+
 # Консоль Windows по умолчанию cp1251: русский текст и «→» в print() валят UnicodeEncodeError.
 for _stream in (sys.stdout, sys.stderr):
     try:
@@ -911,6 +934,7 @@ def synthesize(sentences, chain=None):
         chain = SYNTH_CHAIN or list(registry)
     skipped = []
     for name in chain:
+        _check_cancel()
         fn = registry.get(name)
         if not fn:
             continue
@@ -941,6 +965,7 @@ def voice_budget():
 def fit(pri_sents, target, chain=None):
     """Сначала режем текст по приоритету, затем при необходимости слегка ускоряем.
     Скорость речи измеряется по факту — работает для любого движка."""
+    _check_cancel()
     full = [s for _, s in pri_sents]
     wav = synthesize(full, chain)
     dur = duration(wav)
@@ -969,6 +994,7 @@ def mix(voice_wav, out_file=None):
     Диагностика: ffmpeg запускается с захватом stderr — иначе сбой микса
     неотличим от «не сработало» (журнал молчит). При сбое — аварийный
     даунмикс: пишем только голос, лишь бы файл для эфира был."""
+    _check_cancel()
     out_file = out_file or OUT_FILE
     log("[микс] фон=%s голос=%s → %s" % (BG_FILE, voice_wav, out_file))
     if not BG_FILE or not os.path.exists(BG_FILE):
@@ -1016,11 +1042,14 @@ def run(out_file=None, chain=None):
         log("[путь] в %s писать нельзя, пишу в %s" % (d, alt))
         out_file = alt
     LAST_RESULT.clear()
+    reset_cancel()
     log("%s v%s (%s), автор %s, для %s (%s)" % (APP_NAME, VERSION, STATUS, AUTHOR, STATION, STATION_URL))
     log("[1/3] Open-Meteo…")
     data = fetch_weather()
+    _check_cancel()
     log("[2/3] Текст…")
     pri = build_text(data)
+    _check_cancel()
     target = voice_budget()
     log("--- ТЕКСТ ПРОГНОЗА ---")
     for _, s in pri:
@@ -1028,7 +1057,13 @@ def run(out_file=None, chain=None):
     log("--- %d сл., лимит голоса %.1f с ---"
         % (sum(len(s.split()) for _, s in pri), target))
     log("[3/3] Синтез и микс…")
-    mix(fit(pri, target, chain), out_file)
+    voice = fit(pri, target, chain)
+    # Сколько секунд занял голос из отведённого окна — файл фиксирован по
+    # длительности фона, а вот заполнение окна меняется от текста к тексту.
+    vd = duration(voice)
+    LAST_RESULT.update({"voice_dur": round(vd, 1) if vd else None,
+                        "budget": round(target, 1)})
+    mix(voice, out_file)
     log("Готово: %s" % out_file)
     return out_file
 
@@ -1159,6 +1194,8 @@ def record_run(ok, path=None, err=None, slot=None, *, when=None, runstate=None):
         "used": LAST_RESULT.get("used"),
         "skipped": list(LAST_RESULT.get("skipped") or []),
         "total": LAST_RESULT.get("total") or 0,
+        "voice_dur": LAST_RESULT.get("voice_dur"),
+        "budget": LAST_RESULT.get("budget"),
     }
     st["last_run"] = lr
     if slot:
@@ -1171,8 +1208,20 @@ def record_run(ok, path=None, err=None, slot=None, *, when=None, runstate=None):
 
 
 def forget_slot(slot, runstate=None):
+    """Забыть всё про слот: и исход, и отметку «уже сработал».
+
+    Без чистки fired удалённый и заново добавленный слот на то же время
+    сегодня уже не сработал бы — снаружи это выглядело как поломка.
+    """
     st = read_runstate(runstate)
-    if st.get("slot_results", {}).pop(slot, None) is not None:
+    changed = st.get("slot_results", {}).pop(slot, None) is not None
+    fired = st.get("fired") or {}
+    stale = [k for k in fired if k.endswith(" " + slot)]
+    for k in stale:
+        fired.pop(k, None)
+    if stale:
+        changed = True
+    if changed:
         write_runstate(st, runstate)
 
 

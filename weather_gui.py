@@ -186,6 +186,8 @@ class Worker(QThread):
         try:
             path = weather.run(out_file=self.out_file, chain=self.chain)
             self.done.emit(path)
+        except weather.Cancelled:
+            self.fail.emit("Прервано оператором")
         except Exception as e:  # noqa
             self.fail.emit(str(e))
 
@@ -315,6 +317,7 @@ class Window(QWidget):
         self.cfg = self.load_cfg()
         self.worker = None
         self._fired_slot = None
+        self._cancelling = False   # отмена уже обработана в cancel_run
 
         self._build()
         self._apply_cfg()
@@ -326,7 +329,6 @@ class Window(QWidget):
         self._save_timer.timeout.connect(self.save_cfg)
         self._wire_autosave()
 
-        QShortcut(QKeySequence("F5"), self, self.run_now)
         QShortcut(QKeySequence("Ctrl+O"), self, self.pick_out)
 
         self.timer = QTimer(self)
@@ -362,8 +364,9 @@ class Window(QWidget):
         try:
             with open(CONFIG, "w", encoding="utf-8") as fh:
                 json.dump(self.cfg, fh, ensure_ascii=False, indent=2)
-        except Exception:  # noqa
-            pass
+        except Exception as e:  # noqa
+            # Раньше молча: при read-only папке настройки тихо терялись.
+            self.append_log("Не удалось сохранить config.json: %s" % e)
 
     def _touch(self):
         if hasattr(self, "_save_timer"):
@@ -552,8 +555,14 @@ class Window(QWidget):
         self.btn_open.setMinimumWidth(70)
         self.btn_open.setToolTip("Открыть папку с файлом")
         self.btn_open.clicked.connect(self.open_folder)
+        self.btn_play = QPushButton("Прослушать")
+        self.btn_play.setFixedHeight(H)
+        self.btn_play.setMinimumWidth(96)
+        self.btn_play.setToolTip("Открыть ПОГОДА.wav в плеере")
+        self.btn_play.clicked.connect(self.play_file)
         hl.addWidget(self.out_edit, 1)
         hl.addWidget(btn)
+        hl.addWidget(self.btn_play)
         hl.addWidget(self.btn_open)
         root.addWidget(gb_out)
 
@@ -755,12 +764,22 @@ class Window(QWidget):
         used = total - len(lr.get("skipped") or []) if total else 0
         size = lr.get("size") or 0
         sz = "%.1f МБ" % (size / 1048576.0) if size else ""
+        # Длительность голоса из отведённого окна — главный параметр для эфира.
+        vd, bud = lr.get("voice_dur"), lr.get("budget")
+        voice = ("%.0f/%.0f с" % (vd, bud)) if vd and bud else ""
+        parts = []
+        if voice:
+            parts.append(voice)
+        if lr.get("skipped"):
+            parts.append("пропущен %s" % ", ".join(lr["skipped"]))
+        else:
+            parts.append("%d/%d синт." % (used or total, total or used))
+        if sz:
+            parts.append(sz)
         if not lr.get("ok"):
             sub = "ошибка · файл не создан"
-        elif lr.get("skipped"):
-            sub = "%d/%d · пропущен %s" % (used, total, ", ".join(lr["skipped"]))
         else:
-            sub = "%d/%d синт.%s" % (used or total, total or used, (" · " + sz) if sz else "")
+            sub = " · ".join(parts)
         return val, sub, kind
 
     def _refresh_syn_card(self):
@@ -807,6 +826,17 @@ class Window(QWidget):
         d = os.path.dirname(self.out_edit.text()) or BASE
         if os.path.isdir(d):
             QDesktopServices.openUrl(QUrl.fromLocalFile(d))
+
+    def play_file(self):
+        """Открыть готовый файл в системном плеере (проверить результат)."""
+        p = self.out_edit.text()
+        if not os.path.isabs(p):
+            p = os.path.join(BASE, p)
+        if os.path.isfile(p):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(p))
+        else:
+            QMessageBox.information(self, "Прослушать",
+                                    "Файл ещё не создан:\n%s" % p)
 
     # -------------------------------------------------- расписание
     @staticmethod
@@ -939,12 +969,13 @@ class Window(QWidget):
         return [r.name for r in self.rows if r.check.isChecked()]
 
     def run_now(self, slot=None):
+        """Запустить синтез. True — стартовали, False — не смогли."""
         if self.worker and self.worker.isRunning():
-            return
+            return False
         chain = self.active_chain()
         if not chain:
             QMessageBox.warning(self, "Синтезаторы", "Не включён ни один синтезатор.")
-            return
+            return False
         ev = next((r.voice() for r in self.rows if r.name == "Edge TTS"), "")
         if ev:
             weather.VOICE = ev
@@ -965,6 +996,7 @@ class Window(QWidget):
         self.worker.logline.connect(self.append_log)
         weather.LOG_HOOK = self.worker.logline.emit
         self.worker.start()
+        return True
 
     def run_or_cancel(self):
         """Главная кнопка: запуск, а во время работы — прерывание."""
@@ -980,8 +1012,14 @@ class Window(QWidget):
                                 "Прервать синтез? Файл не будет создан."
                                 ) != QMessageBox.Yes:
             return
-        self.worker.terminate()
-        self.worker.wait(2000)
+        # Кооперативно: флаг в weather, поток сам выйдет между этапами.
+        # terminate() только как крайняя мера, если за 5 с не отозвался.
+        self._cancelling = True
+        weather.request_cancel()
+        if not self.worker.wait(5000):
+            self.append_log("Не отозвался за 5 с — жёсткое прерывание")
+            self.worker.terminate()
+            self.worker.wait(2000)
         self.append_log("Прервано оператором")
         self.set_progress("error", 0, "Прервано")
         self._record_run(False, None, "Прервано оператором", slot=self._fired_slot)
@@ -1020,6 +1058,7 @@ class Window(QWidget):
 
     def on_done(self, path):
         self._set_busy(False)
+        weather.LOG_HOOK = None      # поток отработал — не держим ссылку на него
         skipped = weather.LAST_RESULT.get("skipped") or []
         self.set_progress("warning" if skipped else "success", 100,
                           "Готово" if not skipped else "Готово (частично)")
@@ -1028,6 +1067,12 @@ class Window(QWidget):
         self._update_schedule_status()
 
     def on_fail(self, err):
+        weather.LOG_HOOK = None
+        if self._cancelling:
+            # Прерывание уже записано в cancel_run: второй исход не пишем
+            # и не переводим прогресс из «Прервано» в «Ошибка».
+            self._cancelling = False
+            return
         self._set_busy(False)
         self.set_progress("error", 0, "Ошибка")
         self.append_log("Ошибка: %s" % err)
@@ -1044,9 +1089,13 @@ class Window(QWidget):
             row = self._sched_row(i)
             if row and row.enabled() and row.time_str == now.strftime("%H:%M") \
                     and not weather.slot_fired(key):
-                weather.mark_slot(key)      # общий флаг с CLI: слот не сработает дважды
+                # Отметку ставим ТОЛЬКО если синтез реально стартовал: раньше
+                # mark_slot шёл первым, и занятый движок «съедал» слот навсегда.
                 self.append_log("Расписание: %s" % key)
-                self.run_now(slot=row.time_str)
+                if self.run_now(slot=row.time_str):
+                    weather.mark_slot(key)
+                else:
+                    self.append_log("Расписание: %s — движок занят, слот не отмечен" % key)
                 break
 
     def closeEvent(self, e):

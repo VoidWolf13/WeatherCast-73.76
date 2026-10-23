@@ -31,6 +31,9 @@ weather.log
 .backup/
 manifest.local.json
 
+# --- Корзина проекта (чистит void) ---
+_Корзина-*/
+
 # --- Мусор ОС и файловой системы ---
 System Volume Information/
 desktop.ini
