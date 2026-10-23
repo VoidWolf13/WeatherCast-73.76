@@ -45,6 +45,20 @@ import style    # noqa: E402
 
 CONFIG = os.path.join(BASE, "config.json")
 EDGE_VOICES = ["ru-RU-DmitryNeural", "ru-RU-SvetlanaNeural"]
+# Технические имена остаются в config.json и в вызовах синтеза, а в списке
+# выбора показываем человеческие подписи.
+EDGE_LABELS = {"ru-RU-DmitryNeural": "Дмитрий",
+               "ru-RU-SvetlanaNeural": "Светлана"}
+PIPER_LABELS = {"denis": "Денис", "dmitri": "Дмитрий",
+                "irina": "Ирина", "ruslan": "Руслан"}
+
+
+def piper_voice_label(path):
+    """ru_RU-denis-medium.onnx → «Денис»; незнакомое имя показываем как есть."""
+    base = os.path.basename(path)
+    parts = base.split("-")
+    key = parts[1].lower() if len(parts) > 1 else ""
+    return PIPER_LABELS.get(key, base)
 SYNTH_NAMES = ("Edge TTS", "gTTS", "Piper")
 
 # ---- единая сетка (кратно 4 px) ------------------------------------------
@@ -447,7 +461,7 @@ class Window(QWidget):
         vf = self.ver_chip.font()
         vf.setPointSize(8)
         self.ver_chip.setFont(vf)
-        self.ver_chip.setProperty("state", "second")
+        self.ver_chip.setProperty("state", "version")
         repolish(self.ver_chip)
         hh.addWidget(self.app_title)
         hh.addStretch(1)
@@ -652,14 +666,21 @@ class Window(QWidget):
         self._fit_sched_height()
 
     def voice_options(self, name):
+        """Подписи для списка голосов: человеческие имена, значения — технические.
+
+        У Piper раньше был пункт «авто (по умолчанию)» с пустым значением, и
+        он дублировал первый файл из voices/ (synth_piper при пустой модели
+        берёт первый по алфавиту — ru_RU-denis-medium.onnx). Теперь в списке
+        только реальные голоса, и первый из них выбран явно.
+        """
         if name == "Edge TTS":
-            return [(v, v) for v in EDGE_VOICES]
+            return [(EDGE_LABELS.get(v, v), v) for v in EDGE_VOICES]
         if name == "Piper":
-            opts = [("авто (по умолчанию)", "")]
-            for p in self.piper_models():
-                opts.append((os.path.basename(p), p))
-            return opts
-        return [("русский", "")]        # gTTS — один голос
+            models = self.piper_models()
+            if not models:
+                return [("нет моделей", "")]
+            return [(piper_voice_label(p), p) for p in models]
+        return [("Русский", "")]        # gTTS — один голос
 
     def badge_for(self, name):
         """Бейдж строки: (текст, цвет). «1 голос» — ограничение, «офлайн» — режим."""

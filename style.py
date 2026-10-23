@@ -223,6 +223,7 @@ QLabel[state="warning"] { color: $WARNING; }
 QLabel[state="error"]   { color: $ERROR; }
 QLabel[state="neutral"] { color: $NEUTRAL; }
 QLabel[state="second"]  { color: $TEXT_SECOND; }
+QLabel[state="version"] { color: $WARNING; }   /* версия — цвет окантовки окна */
 """).substitute({**COLORS,
     "ICON_CHECK": _icon("check.png"),
     "ICON_UP": _icon("chevron-up.png"),

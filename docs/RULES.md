@@ -26,7 +26,10 @@ WeatherCast 73.76 — генератор аудиопрогноза погоды
 Порядок приоритета по умолчанию:
 **Edge TTS (Microsoft) → gTTS (Google) → Piper (офлайн).**
 Набор и порядок задаются в интерфейсе. Piper — офлайн-резерв.
-Голоса: Edge — Dmitry/Svetlana; gTTS — русский; Piper — denis/dmitri/irina/ruslan.
+Голоса: Edge — Дмитрий/Светлана (`ru-RU-DmitryNeural` / `ru-RU-SvetlanaNeural`),
+gTTS — русский, Piper — Денис/Дмитрий/Ирина/Руслан (файлы
+`ru_RU-<голос>-medium.onnx`). В интерфейсе показываются человеческие имена,
+в `config.json` — технические значения.
 
 ## 4. Целевая платформа
 
