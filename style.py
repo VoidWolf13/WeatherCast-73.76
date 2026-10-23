@@ -186,12 +186,23 @@ QListWidget {
 }
 QListWidget::item:alternate { background: $BG_HOVER; }
 
-/* ---- чекбокс ---- */
+/* ---- чекбокс: мягкая окантовка + реальная галочка ---- */
 QCheckBox { background: transparent; spacing: 8px; }
-QCheckBox::indicator { width: 18px; height: 18px; border-radius: 5px; border: 1px solid $BORDER_HOVER; background: $BG_FIELD; }
-QCheckBox::indicator:hover { border-color: $ACCENT; }
-QCheckBox::indicator:checked { background: $ACCENT; border-color: $ACCENT; image: none; }
+QCheckBox::indicator {
+    width: 18px; height: 18px;
+    border-radius: 5px;
+    border: 1px solid $BORDER_HOVER;
+    background: $BG_ALT;
+}
+QCheckBox::indicator:hover { border-color: $ACCENT; background: $BG_HOVER; }
+QCheckBox::indicator:checked {
+    background: $ACCENT;
+    border-color: $ACCENT;
+    image: url("$ICON_CHECK");
+}
+QCheckBox::indicator:checked:hover { background: $ACCENT_HOVER; border-color: $ACCENT_HOVER; }
 QCheckBox::indicator:disabled { background: $BG_ALT; border-color: $BORDER; }
+QCheckBox::indicator:checked:disabled { background: $NEUTRAL_BG; border-color: $BORDER; }
 
 /* ---- прокрутка ---- */
 QScrollBar:vertical { background: transparent; width: 10px; margin: 4px; }
@@ -210,6 +221,7 @@ QLabel[state="error"]   { color: $ERROR; }
 QLabel[state="neutral"] { color: $NEUTRAL; }
 QLabel[state="second"]  { color: $TEXT_SECOND; }
 """).substitute({**COLORS,
+    "ICON_CHECK": _icon("check.png"),
     "ICON_UP": _icon("chevron-up.png"),
     "ICON_DOWN": _icon("chevron-down.png"),
 })
