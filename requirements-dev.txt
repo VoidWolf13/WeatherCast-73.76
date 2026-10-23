@@ -1,0 +1,4 @@
+# Зависимости для тестов (не входят в сборку exe).
+#   python3 -m pip install --user -r requirements-dev.txt
+pytest>=9
+hypothesis>=6
