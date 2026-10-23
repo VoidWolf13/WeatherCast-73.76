@@ -13,7 +13,21 @@
 фон окна; остальные контейнеры прозрачны.
 """
 
+import os
+import sys
 from string import Template
+
+
+def _icon(name):
+    """Абсолютный путь к PNG-иконке: рядом со скриптом или в _MEIPASS сборки."""
+    for base in (os.path.dirname(os.path.abspath(__file__)),
+                 getattr(sys, "_MEIPASS", "")):
+        if not base:
+            continue
+        p = os.path.join(base, "assets", "icons", name)
+        if os.path.exists(p):
+            return p.replace("\\", "/")
+    return ""
 
 COLORS = {
     "BG_WINDOW":    "#1B1B1D",
@@ -43,7 +57,7 @@ COLORS = {
 
 _QSS = Template("""
 /* фон окна несёт только корень */
-#root { background: $BG_WINDOW; }
+#root { background: $BG_WINDOW; border: 1px solid $WARNING; }
 QWidget { color: $TEXT_PRIMARY; font-family: "Segoe UI"; font-size: 9pt; background: transparent; }
 
 /* ---- KPI-карточки (главный уровень иерархии, как в референсе) ---- */
@@ -87,7 +101,23 @@ QLineEdit, QComboBox, QSpinBox {
 QLineEdit:hover, QComboBox:hover, QSpinBox:hover { border-color: $BORDER_HOVER; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border-color: $ACCENT; }
 QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled { color: $TEXT_DISABLED; background: $BG_ALT; }
-QComboBox::drop-down { border: none; width: 24px; }
+QComboBox::drop-down { border: none; width: 26px; }
+QComboBox::down-arrow { image: url("$ICON_DOWN"); width: 12px; height: 8px; }
+
+/* QSpinBox: свои кнопки — иначе Fusion рисует невнятные прямоугольники */
+QSpinBox { padding-right: 26px; }
+QSpinBox::up-button, QSpinBox::down-button {
+    subcontrol-origin: border;
+    width: 24px;
+    background: transparent;
+    border: none;
+}
+QSpinBox::up-button   { subcontrol-position: top right; }
+QSpinBox::down-button { subcontrol-position: bottom right; }
+QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: $BG_HOVER; }
+QSpinBox::up-arrow   { image: url("$ICON_UP"); width: 12px; height: 8px; }
+QSpinBox::down-arrow { image: url("$ICON_DOWN"); width: 12px; height: 8px; }
+QSpinBox::up-arrow:disabled, QSpinBox::down-arrow:disabled { image: none; }
 QComboBox QAbstractItemView {
     background: $BG_PANEL; border: 1px solid $BORDER; border-radius: 8px;
     padding: 4px; outline: none; selection-background-color: $BG_HOVER;
@@ -179,7 +209,10 @@ QLabel[state="warning"] { color: $WARNING; }
 QLabel[state="error"]   { color: $ERROR; }
 QLabel[state="neutral"] { color: $NEUTRAL; }
 QLabel[state="second"]  { color: $TEXT_SECOND; }
-""").substitute(COLORS)
+""").substitute({**COLORS,
+    "ICON_UP": _icon("chevron-up.png"),
+    "ICON_DOWN": _icon("chevron-down.png"),
+})
 
 
 def apply_style(app):

@@ -46,7 +46,6 @@ import style    # noqa: E402
 CONFIG = os.path.join(BASE, "config.json")
 EDGE_VOICES = ["ru-RU-DmitryNeural", "ru-RU-SvetlanaNeural"]
 SYNTH_NAMES = ("Edge TTS", "gTTS", "Piper")
-MINUTE_STEPS = ("00", "05", "10", "15", "20", "30", "45")
 
 # ---- единая сетка (кратно 4 px) ------------------------------------------
 PAD = 10         # внутренний отступ контейнеров
@@ -85,6 +84,19 @@ def dot_pixmap(color, size=8):
     p.drawEllipse(0, 0, size - 1, size - 1)
     p.end()
     return pm
+
+
+class MinuteSpin(QSpinBox):
+    """Минуты шагом 15: 00/15/30/45, по кругу, всегда двузначно."""
+
+    def __init__(self):
+        super().__init__()
+        self.setRange(0, 45)
+        self.setSingleStep(15)
+        self.setWrapping(True)
+
+    def textFromValue(self, v):
+        return "%02d" % v
 
 
 DEFAULTS = {
@@ -236,6 +248,8 @@ class Window(QWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName("root")   # несёт фон окна (см. style.py)
+        # QWidget не рисует QSS-рамку без этого флага — окантовка окна
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.setWindowTitle("WeatherCast 73.76")
         self.cfg = self.load_cfg()
         self.worker = None
@@ -410,12 +424,10 @@ class Window(QWidget):
         self.hh = QSpinBox()
         self.hh.setRange(0, 23)
         self.hh.setWrapping(True)
-        self.hh.setFixedSize(56, H)
+        self.hh.setFixedSize(64, H)
         self.hh.setAlignment(Qt.AlignCenter)
         self.hh.setToolTip("Часы")
-        self.mm = QComboBox()
-        self.mm.setEditable(True)
-        self.mm.addItems(MINUTE_STEPS)
+        self.mm = MinuteSpin()
         self.mm.setFixedSize(64, H)
         self.mm.setToolTip("Минуты")
         b_add = QPushButton("Добавить")
@@ -787,14 +799,7 @@ class Window(QWidget):
         self.add_sched_row(t, True, touch=True)
 
     def add_time(self):
-        try:
-            mm = int(str(self.mm.currentText()).strip())
-        except Exception:  # noqa
-            mm = -1
-        if not (0 <= mm <= 59):
-            QMessageBox.warning(self, "Расписание", "Минуты должны быть от 0 до 59.")
-            return
-        self.add_time_str("%02d:%02d" % (self.hh.value(), mm))
+        self.add_time_str("%02d:%02d" % (self.hh.value(), self.mm.value()))
 
     @staticmethod
     def _left(delta):
