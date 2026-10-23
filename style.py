@@ -45,10 +45,12 @@ COLORS = {
     "ACCENT_HOVER": "#928EE0",
     "ACCENT_TEXT":  "#FFFFFF",
     "SUCCESS":      "#7BB946",
+    "SUCCESS_HOVER":"#94D25A",
     "SUCCESS_BG":   "#233018",
     "WARNING":      "#F7980E",
     "WARNING_BG":   "#33280F",
     "ERROR":        "#F5503A",
+    "ERROR_HOVER":  "#FF7060",
     "ERROR_BG":     "#331B17",
     "NEUTRAL":      "#9A9AA3",
     "NEUTRAL_BG":   "#2B2B2F",
@@ -186,23 +188,24 @@ QListWidget {
 }
 QListWidget::item:alternate { background: $BG_HOVER; }
 
-/* ---- чекбокс: мягкая окантовка + реальная галочка ---- */
+/* ---- чекбокс: без заливки, красная рамка у невыбранного,
+        зелёная у выбранного, галочка оранжевая ---- */
 QCheckBox { background: transparent; spacing: 8px; }
 QCheckBox::indicator {
     width: 18px; height: 18px;
     border-radius: 5px;
-    border: 1px solid $BORDER_HOVER;
-    background: $BG_ALT;
+    border: 1px solid $ERROR;
+    background: transparent;
 }
-QCheckBox::indicator:hover { border-color: $ACCENT; background: $BG_HOVER; }
+QCheckBox::indicator:hover { border-color: $ERROR_HOVER; background: transparent; }
 QCheckBox::indicator:checked {
-    background: $ACCENT;
-    border-color: $ACCENT;
+    border-color: $SUCCESS;
+    background: transparent;
     image: url("$ICON_CHECK");
 }
-QCheckBox::indicator:checked:hover { background: $ACCENT_HOVER; border-color: $ACCENT_HOVER; }
-QCheckBox::indicator:disabled { background: $BG_ALT; border-color: $BORDER; }
-QCheckBox::indicator:checked:disabled { background: $NEUTRAL_BG; border-color: $BORDER; }
+QCheckBox::indicator:checked:hover { border-color: $SUCCESS_HOVER; background: transparent; }
+QCheckBox::indicator:disabled { border-color: $BORDER; background: transparent; }
+QCheckBox::indicator:checked:disabled { border-color: $BORDER; background: transparent; }
 
 /* ---- прокрутка ---- */
 QScrollBar:vertical { background: transparent; width: 10px; margin: 4px; }
